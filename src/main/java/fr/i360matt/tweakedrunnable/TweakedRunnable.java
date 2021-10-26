@@ -1,42 +1,109 @@
 package fr.i360matt.tweakedrunnable;
 
+import org.jetbrains.annotations.NotNull;
+
 import java.io.Closeable;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.*;
 
-public interface TweakedRunnable extends Runnable, Closeable {
+public class TweakedRunnable implements Closeable {
 
-    Map<TweakedRunnable, ScheduledExecutorService> executors = new HashMap<>();
+    private static final Set<TweakedRunnable> services = new HashSet<>();
+    private static boolean hideError = true;
+
+    public static void hideError (final boolean stat) {
+        hideError = stat;
+    }
+
+    public static TweakedRunnable create (final CustomRunnable runnable) {
+        return new TweakedRunnable(runnable);
+    }
+
+    public static void closeAll () {
+        services.forEach(TweakedRunnable::close);
+    }
+    public static void forceCloseAll () {
+        services.forEach(TweakedRunnable::close);
+    }
 
 
+    private final ScheduledThreadPoolExecutor executor;
+    private final CustomRunnable runnable;
+
+    public TweakedRunnable (CustomRunnable miaou) {
+        this.runnable = miaou;
+
+        this.executor = new ScheduledThreadPoolExecutor(1);
+        services.add(this);
+    }
 
     /**
-     * Allows to initialize a ScheduledExecutorService with the desired number of threads.
+     * Allows to define the desired number of threads.
      *
      * @param threads The number of simultaneous threads / executions.
      */
-    default void setThreads (int threads) {
-        if (!this.executors.containsKey(this)) {
-            this.executors.put(this, Executors.newScheduledThreadPool(threads));
+    public TweakedRunnable setThreads (final int threads) {
+        if (hideError && this.isDisabled())
+            return this;
+
+        executor.setCorePoolSize(threads);
+        return this;
+    }
+
+    /**
+     * Run without blocking.
+     */
+    protected void runInSameThread () {
+        try {
+            if (hideError && this.isDisabled())
+                return;
+            this.runnable.run();
+        } catch (Exception e) {
+            e.printStackTrace();
         }
     }
 
     /**
-     * The main override method.
+     * Run without blocking.
      *
+     * @param then Then.
+     * @param catcher Catch.
+     */
+    protected void runInSameThread (@NotNull final Runnable then, @NotNull final Runnable catcher) {
+        try {
+            if (hideError && this.isDisabled())
+                return;
+            this.runnable.run();
+            then.run();
+        } catch (final Throwable throwable) {
+            catcher.run();
+        }
+    }
+
+
+    // _________________________________________________________________________________________________________________
+
+    public boolean isDisabled () {
+        return (this.executor == null) || (this.executor.isShutdown());
+    }
+
+    /**
      * It is semi-multi-threaded with a blocking function,
      * i.e. it is like an ordinary Runnable,
      * but we can stop all its executions with forceClose()
      */
-    @Override
-    default void run () {
+    public TweakedRunnable run () {
+        if (hideError && this.isDisabled())
+            return this;
         final CompletableFuture<?> future = new CompletableFuture<>();
-        __initExec().execute(() -> {
-            __runSameThread();
+        executor.execute(() -> {
+            this.runInSameThread();
             future.complete(null);
         });
         future.join();
+
+        return this;
     }
 
     /**
@@ -47,21 +114,33 @@ public interface TweakedRunnable extends Runnable, Closeable {
      * @param then Then.
      * @param catcher Catch.
      */
-    default void run (final Runnable then, final Runnable catcher) {
+    public TweakedRunnable run (@NotNull final Runnable then, @NotNull final Runnable catcher) {
+        if (hideError && this.isDisabled())
+            return this;
         final CompletableFuture<?> future = new CompletableFuture<>();
-        __initExec().execute(() -> {
+        this.executor.execute(() -> {
             try {
-                this.body();
+                this.runnable.run();
                 future.complete(null);
-                if (then != null)
-                    then.run();
+                then.run();
             } catch (final Throwable throwable) {
                 future.complete(null);
-                if (catcher != null)
-                    catcher.run();
+                catcher.run();
             }
         });
         future.join();
+        return this;
+    }
+
+    /**
+     * The method is async.
+     * Executions can be stopped with forceClose().
+     * @return The Future of task.
+     */
+    public Future<?> runAsync () {
+        if (hideError && this.isDisabled())
+            return null;
+        return this.executor.submit((Runnable) this::runInSameThread);
     }
 
     /**
@@ -75,32 +154,12 @@ public interface TweakedRunnable extends Runnable, Closeable {
      * @param catcher Catch.
      * @return The Future of task.
      */
-    default Future<?> runAsync (final Runnable then, final Runnable catcher) {
-        return __initExec().submit(() -> {
-            __runSameThread(then, catcher);
+    public Future<?> runAsync (final Runnable then, final Runnable catcher) {
+        if (hideError && this.isDisabled())
+            return null;
+        return this.executor.submit(() -> {
+            runInSameThread(then, catcher);
         });
-    }
-
-    /**
-     * The method is async.
-     * Executions can be stopped with forceClose().
-     * @return The Future of task.
-     */
-    default Future<?> runAsync () {
-        return __initExec().submit((Runnable) this::__runSameThread);
-    }
-
-    /**
-     * Run the task after x ms.
-     *
-     * The method is async,
-     * Executions can be cancelled by close() and can be stopped with forceClose().
-     *
-     * @param ms Timeout before execution.
-     * @return The ScheduledFuture of task.
-     */
-    default ScheduledFuture<?> runAfter (int ms) {
-        return __initExec().schedule((Runnable) this::__runSameThread, ms, TimeUnit.MILLISECONDS);
     }
 
     /**
@@ -112,7 +171,9 @@ public interface TweakedRunnable extends Runnable, Closeable {
      * @param ms The periode of execution.
      * @return The ScheduledFuture of task.
      */
-    default ScheduledFuture<?> runRepeated (int ms) {
+    public ScheduledFuture<?> runRepeated (int ms) {
+        if (hideError && this.isDisabled())
+            return null;
         return runRepeated(0, ms);
     }
 
@@ -126,86 +187,43 @@ public interface TweakedRunnable extends Runnable, Closeable {
      * @param ms The periode of execution.
      * @return The ScheudledFuture of task.
      */
-    default ScheduledFuture<?> runRepeated (int wait, int ms) {
-        return __initExec().scheduleAtFixedRate(() -> __runSameThread(null, null), wait, ms, TimeUnit.MILLISECONDS);
+    public ScheduledFuture<?> runRepeated (int wait, int ms) {
+        if (hideError && this.isDisabled())
+            return null;
+        return this.executor.scheduleAtFixedRate(this::runInSameThread, wait, ms, TimeUnit.MILLISECONDS);
     }
 
     /**
-     * Run legacy lambda.
+     * Run the task after x ms.
+     *
+     * The method is async,
+     * Executions can be cancelled by close() and can be stopped with forceClose().
+     *
+     * @param ms Timeout before execution.
+     * @return The ScheduledFuture of task.
      */
-    default void __runSameThread () {
-        try {
-            body();
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    /**
-     * Run legacy lambda.
-     * @param then Then.
-     * @param catcher Catcher.
-     */
-    default void __runSameThread (final Runnable then, final Runnable catcher) {
-        try {
-            this.body();
-            if (then != null)
-                then.run();
-        } catch (final Throwable throwable) {
-            if (catcher != null)
-                catcher.run();
-        }
+    public ScheduledFuture<?> runAfter (int ms) {
+        if (hideError && this.isDisabled())
+            return null;
+        return this.executor.schedule((Runnable) this::runInSameThread, ms, TimeUnit.MILLISECONDS);
     }
 
     /**
-     * Create or get ScheduledExecutor with 1 thread.
-     * @return ScheduledExecutor.
+     * Close new tasks as well as running tasks.
      */
-    default ScheduledExecutorService __initExec () {
-        ScheduledExecutorService ex;
-        if ((ex = executors.get(this)) == null) {
-            ex = Executors.newScheduledThreadPool(1);
-            executors.put(this, ex);
-        }
-        return ex;
+    public void forceClose () {
+        if (this.executor != null)
+            this.executor.shutdownNow();
+        services.remove(this);
     }
 
     /**
      * Close new tasks, while letting current tasks run.
      */
     @Override
-    default void close () {
-        ScheduledExecutorService ex;
-        if ((ex = executors.get(this)) != null) {
-            ex.shutdown();
-        }
+    public void close () {
+        if (this.executor != null)
+            this.executor.shutdown();
+        services.remove(this);
     }
-
-    /**
-     * Close new tasks as well as running tasks.
-     */
-    default void forceClose () {
-        ScheduledExecutorService ex;
-        if ((ex = executors.get(this)) != null) {
-            ex.shutdownNow();
-        }
-    }
-
-    /**
-     * The content of the task, which traditionally should be in run().
-     * @throws Exception Catch any exceptions.
-     */
-    void body () throws Exception;
-
-
-
-
-
-
-
-
-    static TweakedRunnable create (TweakedRunnable tweakedRunnable) {
-        return tweakedRunnable;
-        // just a shortcut
-    }
-
 }

@@ -5,18 +5,18 @@ public class Test {
     public static void main (String[] args) {
 
 
-
-        TweakedRunnable alpha = () -> {
+        TweakedRunnable alpha = TweakedRunnable.create(() -> {
             System.out.println("A");
             Thread.sleep(1_000);
-        };
+        });
+
         alpha.setThreads(1);
 
 
-        TweakedRunnable beta = () -> {
+        TweakedRunnable beta = TweakedRunnable.create(() -> {
             System.out.println("B");
             Thread.sleep(1_000);
-        };
+        });
         beta.setThreads(10);
 
 
