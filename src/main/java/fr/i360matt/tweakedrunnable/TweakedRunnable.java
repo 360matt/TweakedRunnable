@@ -24,12 +24,13 @@ public class TweakedRunnable implements Closeable {
         services.forEach(TweakedRunnable::close);
     }
     public static void forceCloseAll () {
-        services.forEach(TweakedRunnable::close);
+        services.forEach(TweakedRunnable::forceClose);
     }
 
 
     private final ScheduledThreadPoolExecutor executor;
     private final CustomRunnable runnable;
+    private final Set<CompletableFuture<?>> tasks = new HashSet<>();
 
     public TweakedRunnable (CustomRunnable miaou) {
         this.runnable = miaou;
@@ -97,11 +98,13 @@ public class TweakedRunnable implements Closeable {
         if (hideError && this.isDisabled())
             return this;
         final CompletableFuture<?> future = new CompletableFuture<>();
+        this.tasks.add(future);
         executor.execute(() -> {
             this.runInSameThread();
             future.complete(null);
         });
         future.join();
+        this.tasks.remove(future);
 
         return this;
     }
@@ -118,6 +121,7 @@ public class TweakedRunnable implements Closeable {
         if (hideError && this.isDisabled())
             return this;
         final CompletableFuture<?> future = new CompletableFuture<>();
+        this.tasks.add(future);
         this.executor.execute(() -> {
             try {
                 this.runnable.run();
@@ -129,6 +133,7 @@ public class TweakedRunnable implements Closeable {
             }
         });
         future.join();
+        this.tasks.remove(future);
         return this;
     }
 
@@ -214,6 +219,9 @@ public class TweakedRunnable implements Closeable {
     public void forceClose () {
         if (this.executor != null)
             this.executor.shutdownNow();
+        tasks.forEach(t -> {
+            t.complete(null);
+        });
         services.remove(this);
     }
 
