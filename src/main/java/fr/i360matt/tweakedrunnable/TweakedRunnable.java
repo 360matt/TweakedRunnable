@@ -4,12 +4,15 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.Closeable;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
 
 public class TweakedRunnable implements Closeable {
 
-    private static final Set<TweakedRunnable> services = new HashSet<>();
+    // private static final Set<TweakedRunnable> services = new HashSet<>();
+    private static final Map<CustomRunnable, TweakedRunnable> cache = new ConcurrentHashMap<>();
+
     private static boolean hideError = true;
 
     public static void hideError (final boolean stat) {
@@ -17,14 +20,17 @@ public class TweakedRunnable implements Closeable {
     }
 
     public static TweakedRunnable create (final CustomRunnable runnable) {
-        return new TweakedRunnable(runnable);
+        TweakedRunnable tweakedRunnable = cache.get(runnable);
+        if (tweakedRunnable == null)
+            tweakedRunnable = new TweakedRunnable(runnable);
+        return tweakedRunnable;
     }
 
     public static void closeAll () {
-        services.forEach(TweakedRunnable::close);
+        cache.values().forEach(TweakedRunnable::close);
     }
     public static void forceCloseAll () {
-        services.forEach(TweakedRunnable::forceClose);
+        cache.values().forEach(TweakedRunnable::forceClose);
     }
 
 
@@ -32,11 +38,9 @@ public class TweakedRunnable implements Closeable {
     private final CustomRunnable runnable;
     private final Set<CompletableFuture<?>> tasks = new HashSet<>();
 
-    public TweakedRunnable (CustomRunnable miaou) {
-        this.runnable = miaou;
-
+    private TweakedRunnable (CustomRunnable customRunnable) {
+        this.runnable = customRunnable;
         this.executor = new ScheduledThreadPoolExecutor(1);
-        services.add(this);
     }
 
     /**
@@ -217,12 +221,11 @@ public class TweakedRunnable implements Closeable {
      * Close new tasks as well as running tasks.
      */
     public void forceClose () {
-        if (this.executor != null)
-            this.executor.shutdownNow();
+        this.executor.shutdownNow();
         tasks.forEach(t -> {
             t.complete(null);
         });
-        services.remove(this);
+        cache.remove(this.runnable);
     }
 
     /**
@@ -230,8 +233,7 @@ public class TweakedRunnable implements Closeable {
      */
     @Override
     public void close () {
-        if (this.executor != null)
-            this.executor.shutdown();
-        services.remove(this);
+        this.executor.shutdown();
+        cache.remove(this.runnable);
     }
 }

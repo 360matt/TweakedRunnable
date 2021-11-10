@@ -9,6 +9,6 @@
 <dependency>
     <groupId>io.github.360matt</groupId>
     <artifactId>TweakedRunnable</artifactId>
-    <version>1.2-SNAPSHOT</version>
+    <version>1.2.1-SNAPSHOT</version>
 </dependency>
 ```
